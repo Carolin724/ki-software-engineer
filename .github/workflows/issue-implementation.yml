@@ -78,6 +78,8 @@ jobs:
           sudo chown -R issue-codex:issue-codex "$GITHUB_WORKSPACE/src" "$GITHUB_WORKSPACE/tests"
           sudo install -d -o issue-codex -g issue-codex \
             "$GITHUB_WORKSPACE/.angular" "$GITHUB_WORKSPACE/dist"
+          sudo install -d -o root -g root -m 755 \
+            "$GITHUB_WORKSPACE/.codex" "$GITHUB_WORKSPACE/.aws"
           sudo install -o root -g root -m 444 "$RUNNER_TEMP/implementation-issue.json" /home/issue-codex/issue.json
           sudo install -o root -g root -m 444 "$RUNNER_TEMP/implementation-result.schema.json" /home/issue-codex/result.schema.json
           sudo -H -u issue-codex git config --global --add safe.directory "$GITHUB_WORKSPACE"
