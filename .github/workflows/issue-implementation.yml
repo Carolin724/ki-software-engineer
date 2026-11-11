@@ -153,9 +153,10 @@ jobs:
             fachlicher Favoriten-Service ist bei entsprechendem Issue-Bedarf erlaubt;
             fuehre dafuer keine zusaetzlichen Abhaengigkeiten ein.
             Installiere nichts und starte keine Netzwerk- oder Testbefehle hier.
-            Fuehre mit den bereits installierten Abhaengigkeiten npm run build aus.
+            Pruefe mit npm run build -- --configuration development den Offline-Build.
+            Diese vorhandene Konfiguration vermeidet externe Font-Downloads.
             Behebe Compilerfehler innerhalb der Freigaben und pruefe den Build erneut.
-            Melde implemented erst nach erfolgreichem Build. Nachfolgende Workflow-
+            Melde implemented erst nach erfolgreichem Offline-Build. Nachfolgende Workflow-
             Schritte pruefen den Produktionsbuild unabhaengig und die Akzeptanztests.
 
             Bearbeite die echten Dateien im bereits ausgecheckten Feature-Branch.
