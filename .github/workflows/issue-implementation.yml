@@ -133,6 +133,10 @@ jobs:
             keine test.skip/test.only, keine deaktivierten Assertions. Decke alle
             bestaetigten Akzeptanzkriterien durch passende beobachtbare Pruefungen ab;
             eine einzelne Testdatei darf dafuer mehrere Testfaelle enthalten.
+            Behalte bei Sternschaltflaechen einen stabilen Bezug auf dasselbe Buch.
+            Wenn der zugaengliche Name nach dem Klick wechselt, darf die Assertion
+            nicht den alten Namen mit .first() erneut aufloesen; pruefe den neuen
+            Favoritenzustand weiterhin am selben Buch.
             Die UI-Sprache richtet sich nach den bestaetigten Issue-Anforderungen.
             Fuer Issue #1 sind alle von der Anwendung vorgegebenen Oberflaechentexte
             auf Deutsch umzusetzen, einschliesslich Navigation, Bedienung, zugaenglicher
