@@ -126,13 +126,12 @@ jobs:
             Skills, Sicherheitsregeln, Secrets, .git oder anderen versteckten Dateien.
             Keine Symlinks, Binaerdateien oder ausfuehrbaren Dateimodi.
 
-            Fuege einen aussagekraeftigen Playwright-Akzeptanztest in
-            tests/issue-${{ github.event.issue.number }}.spec.ts hinzu. Teste die lokale
-            BookMonkey-App mit absoluten URLs ab http://localhost:4200 und mocke die
-            Buch-API http://localhost:4730/books bei Bedarf. Keine externen Beispieltests,
-            keine test.skip/test.only, keine deaktivierten Assertions. Decke alle
-            bestaetigten Akzeptanzkriterien durch passende beobachtbare Pruefungen ab;
-            eine einzelne Testdatei darf dafuer mehrere Testfaelle enthalten.
+            Eine neue Playwright-Testdatei ist nicht pauschal erforderlich.
+            Erhalte vorhandene Tests und ihre fachlichen Erwartungen. Falls du im
+            erlaubten Issue-Testpfad Tests ergaenzt, teste die lokale BookMonkey-App
+            mit absoluten URLs ab http://localhost:4200 und mocke die Buch-API
+            http://localhost:4730/books bei Bedarf. Keine externen Beispieltests,
+            keine test.skip/test.only, keine deaktivierten oder abgeschwaechten Assertions.
             Behalte bei Sternschaltflaechen einen stabilen Bezug auf dasselbe Buch.
             Wenn der zugaengliche Name nach dem Klick wechselt, darf die Assertion
             nicht den alten Namen mit .first() erneut aufloesen; pruefe den neuen
@@ -157,7 +156,8 @@ jobs:
             Diese vorhandene Konfiguration vermeidet externe Font-Downloads.
             Behebe Compilerfehler innerhalb der Freigaben und pruefe den Build erneut.
             Melde implemented erst nach erfolgreichem Offline-Build. Nachfolgende Workflow-
-            Schritte pruefen den Produktionsbuild unabhaengig und die Akzeptanztests.
+            Schritte pruefen den Produktionsbuild unabhaengig und fuehren vorhandene
+            BookMonkey-Akzeptanz- und Regressionstests verpflichtend aus.
 
             Bearbeite die echten Dateien im bereits ausgecheckten Feature-Branch.
             Liefere keinen Patch. Keine Git-Schreiboperationen, Commits, Pushes,

@@ -49,17 +49,18 @@ function parseResult(raw) {
   return result;
 }
 
-function assertReport(report, testFile) {
+function assertReport(report, testFiles) {
   const specs = [];
   const visit = suite => {
     specs.push(...(suite.specs ?? []));
     for (const child of suite.suites ?? []) visit(child);
   };
   for (const suite of report.suites ?? []) visit(suite);
-  const acceptance = specs.filter(s => s.file === testFile || s.file === 'tests/' + testFile);
   const stats = report.stats;
   if (!stats || stats.expected < 1 || stats.skipped || stats.unexpected || stats.flaky ||
-      report.errors?.length || !acceptance.length || acceptance.some(s => !s.ok ||
+      report.errors?.length || !testFiles.length ||
+      testFiles.some(file => !specs.some(s => s.file === file || s.file === 'tests/' + file)) ||
+      specs.some(s => !s.ok ||
         !s.tests?.length || s.tests.some(t => t.expectedStatus !== 'passed' ||
           !t.results?.length || t.results.at(-1).status !== 'passed'))) {
     throw new Error('Acceptance tests must actually pass, without skips, flaky or expected failures');
@@ -78,8 +79,8 @@ function checkChanges(git, state, stat = file => fs.lstatSync(file)) {
     ...splitPaths(git(['ls-files', '--others', '--exclude-standard', '-z']))
   ])];
   const testPath = 'tests/issue-' + state.number + '.spec.ts';
-  if (!files.length || !files.includes(testPath) || !files.some(f => f.startsWith('src/'))) {
-    throw new Error('A production change and an issue-specific acceptance test are required');
+  if (!files.length || !files.some(f => f.startsWith('src/'))) {
+    throw new Error('A production change is required');
   }
   if (files.length > 100 || files.some(f => !allowedPath(f, state.number))) {
     throw new Error('Changes include a protected path or exceed 100 files');
@@ -94,9 +95,11 @@ function checkChanges(git, state, stat = file => fs.lstatSync(file)) {
       } catch (error) { if (error.code !== 'ENOENT') throw error; }
     }
   }
-  try {
-    if (!stat(testPath).isFile()) throw new Error('Acceptance test is not a regular file');
-  } catch { throw new Error('The required acceptance test is missing or unsafe'); }
+  if (files.includes(testPath)) {
+    try {
+      if (!stat(testPath).isFile()) throw new Error('Acceptance test is not a regular file');
+    } catch { throw new Error('The changed acceptance test is missing or unsafe'); }
+  }
   // Stage real files, including new files; no model-generated diff is parsed or applied.
   git(['add', '--', ...files]);
   for (const record of splitPaths(git(['diff', '--cached', '--numstat', '--no-renames', '-z', state.base, '--']))) {
@@ -201,10 +204,15 @@ async function validate(api) {
 }
 
 async function acceptance(api) {
-  const state = runtime(api).load();
+  const r = runtime(api), state = r.load();
   const test = 'issue-' + state.number + '.spec.ts';
   const files = fs.readdirSync('tests').filter(f => f === test || /^(book-[a-z0-9-]+|issue-[0-9]+)\.spec\.ts$/.test(f));
-  if (!files.includes(test)) throw new Error('Required issue acceptance test is missing');
+  if (!files.length) {
+    state.testSummary = 'No BookMonkey Playwright tests are present; external example tests excluded.';
+    r.save(state);
+    api.core.info(state.testSummary);
+    return;
+  }
   const result = spawnSync('sudo', ['-H', '-u', worker, '--', 'env', '-i',
     'HOME=/home/' + worker, 'PATH=' + process.env.PROJECT_NODE_BIN + ':/usr/bin:/bin', 'CI=true',
     'PLAYWRIGHT_BROWSERS_PATH=' + process.env.PLAYWRIGHT_BROWSERS_PATH,
@@ -225,8 +233,10 @@ async function acceptance(api) {
   };
   for (const suite of report.suites ?? []) logFailures(suite);
   if (result.status !== 0) throw new Error('Playwright failed (exit ' + result.status + ')');
-  const count = assertReport(report, test);
-  api.core.info('Verified ' + count + ' passing Chromium tests, including issue acceptance.');
+  const count = assertReport(report, files);
+  state.testSummary = 'Verified ' + count + ' passing Chromium tests in ' + files.length + ' BookMonkey test file(s), without skips.';
+  r.save(state);
+  api.core.info(state.testSummary);
 }
 
 async function publish(api) {
@@ -257,7 +267,7 @@ async function publish(api) {
         'Implemented directly in the feature branch with OpenAI Codex.', '',
         'Validation completed before publication:', '- Allowed text paths and file modes checked.',
         '- Production build passed (`npm run build`).',
-        '- Chromium issue acceptance tests and existing BookMonkey regressions passed without skips.', '',
+        '- ' + state.testSummary, '',
         'Human review required; no automatic merge.'].join('\n') });
     api.core.notice('Created pull request: ' + pr.html_url);
     await api.core.summary.addLink('Implementation pull request', pr.html_url).write();

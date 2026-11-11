@@ -54,6 +54,11 @@ test('workflow structure keeps one gated job and supplies secrets only to the re
   assert.equal(steps.filter(s=>JSON.stringify(s).includes('secrets.PAT_TOKEN')).length, 1);
   assert.equal(steps.filter(s=>JSON.stringify(s).includes('secrets.ANTHROPIC_API_KEY')).length, 1);
   assert.equal(steps.filter(s=>s.if?.startsWith('always()')).length, 2);
+  const build = steps.findIndex(s => s.name === 'Build BookMonkey without runner credentials');
+  const acceptance = steps.findIndex(s => s.with?.script?.includes('.acceptance('));
+  assert(build >= 0 && build < acceptance && acceptance < steps.length - 1);
+  assert.equal(steps[build]['continue-on-error'], undefined);
+  assert.equal(steps[acceptance]['continue-on-error'], undefined);
   const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
   for (const step of steps) if (step.with?.script) new AsyncFunction(step.with.script);
 });
@@ -145,9 +150,19 @@ test('real files including untracked tests are staged without applying a patch',
   assert(!f.calls.some(args => ['apply', 'commit', 'push'].includes(args[0])));
 });
 
-test('protected changes, missing tests, binary patches, executable modes and changed branches fail closed', () => {
+test('production changes can be staged without adding an issue test', () => {
+  const f = gitFixture({ 'ls-files': '', numstat: '1\t0\tsrc/app/app.ts\0',
+    stage: '100644 ' + base + ' 0\tsrc/app/app.ts\0' });
+  const result = workflow.checkChanges(f.git, state, file => {
+    assert(!file.startsWith('tests/'), 'No absent test file should be required');
+    return regular;
+  });
+  assert.deepEqual(result.files, ['src/app/app.ts']);
+});
+
+test('protected or empty changes, binary patches, executable modes and changed branches fail closed', () => {
   for (const overrides of [
-    { diff: '.github/workflows/other.yml\0' }, { 'ls-files': '' },
+    { diff: '.github/workflows/other.yml\0' }, { diff: '', 'ls-files': '' }, { diff: '' },
     { numstat: '-\t-\tsrc/app/app.ts\0' }, { stage: '100755 ' + base + ' 0\tsrc/app/app.ts\0' },
     { stage: '120000 ' + base + ' 0\tsrc/app/app.ts\0' },
     { branch: 'main\n' }, { 'rev-parse': 'c'.repeat(40) }
@@ -162,8 +177,8 @@ const passingReport = () => ({ stats: { expected: 1, skipped: 0, unexpected: 0, 
   suites: [{ suites: [{ specs: [{ file: 'issue-1.spec.ts', ok: true,
     tests: [{ expectedStatus: 'passed', results: [{ status: 'passed' }] }] }] }] }] });
 
-test('acceptance requires actual passing issue tests, not skips, flaky or expected failures', () => {
-  assert.equal(workflow.assertReport(passingReport(), 'issue-1.spec.ts'), 1);
+test('every selected test file must actually pass, without skips, flaky or expected failures', () => {
+  assert.equal(workflow.assertReport(passingReport(), ['issue-1.spec.ts']), 1);
   const mutations = [
     r => { r.stats.skipped = 1; }, r => { r.stats.flaky = 1; }, r => { r.stats.unexpected = 1; },
     r => { r.stats.expected = 0; }, r => { r.errors.push({message:'error'}); },
@@ -173,8 +188,10 @@ test('acceptance requires actual passing issue tests, not skips, flaky or expect
   ];
   for (const mutate of mutations) {
     const r = passingReport(); mutate(r);
-    assert.throws(() => workflow.assertReport(r, 'issue-1.spec.ts'));
+    assert.throws(() => workflow.assertReport(r, ['issue-1.spec.ts']));
   }
+  assert.throws(() => workflow.assertReport(passingReport(), ['issue-1.spec.ts', 'book-favorites.spec.ts']));
+  assert.throws(() => workflow.assertReport(passingReport(), []));
 });
 
 // Run the publication code with a fake filesystem, Git process and GitHub API.
@@ -184,16 +201,26 @@ function publicationFixture(options = {}) {
   const issue = { number: 1, title: 'Favoriten', body: 'AK1', state: 'open',
     user: { login: 'Carolin724' }, labels: [{name:'ready-for-implementation'}] };
   const snapshot = JSON.stringify({title:issue.title, body:issue.body, comments:[]});
-  const saved = { ...state, digest: require('node:crypto').createHash('sha256').update(snapshot).digest('hex'), ...options.state };
+  const saved = { ...state, testSummary: 'Verified 1 passing Chromium tests in 1 BookMonkey test file(s), without skips.',
+    digest: require('node:crypto').createHash('sha256').update(snapshot).digest('hex'), ...options.state };
   const f = gitFixture(options.git);
-  const fakeFs = { lstatSync: () => regular, readFileSync: () => JSON.stringify(saved),
+  const testRuns = [];
+  const fakeFs = { lstatSync: () => regular, readFileSync: p => virtual[p] ?? JSON.stringify(saved),
+    readdirSync: () => options.testFiles ?? ['issue-1.spec.ts'],
     writeFileSync: (p, data) => { virtual[p] = data; } };
   const module = {exports:{}};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'issue-implementation.cjs'),'utf8'), {
     module, Buffer,
-    process: {env:{ RUNNER_TEMP:'/trusted', GITHUB_TRIGGERING_ACTOR:'Carolin724', GH_TOKEN:'test-token', ...options.env }},
+    process: {env:{ RUNNER_TEMP:'/trusted', GITHUB_TRIGGERING_ACTOR:'Carolin724', GH_TOKEN:'test-token',
+      PROJECT_NODE_BIN:'/trusted/node/bin', PLAYWRIGHT_BROWSERS_PATH:'/trusted/browsers', ...options.env }},
     require: name => name === 'node:fs' ? fakeFs : name === 'node:child_process' ? {
       spawnSync: (command,args,opts) => {
+        if (command === 'sudo') {
+          assert.deepEqual(Array.from(args.slice(0, 7)), ['-H', '-u', 'issue-codex', '--', 'env', '-i', 'HOME=/home/issue-codex']);
+          assert(!args.some(arg => arg.includes('test-token')));
+          testRuns.push(args);
+          return options.testResult ?? {status:0,stdout:JSON.stringify(passingReport())};
+        }
         assert.equal(command,'git');
         // Strip the two trusted -c overrides added by makeGit.
         const operation=args.slice(4); calls.push({operation,env:opts.env});
@@ -211,8 +238,44 @@ function publicationFixture(options = {}) {
       rest:{issues:{get:async()=>({data:issue}),listComments:'comments'},
         pulls:{list:'pulls',create:async p=>{if(options.prFailure)throw {status:403};api.created=p;return {data:{html_url:'https://github.com/test/pull/1'}};}},
         git:{listMatchingRefs:async()=>({data:options.refs ?? []}),getRef:async()=>({data:{object:{sha:options.main ?? base}}})}}}};
-  return {subject:module.exports,api,calls,summaries,outputs,virtual};
+  return {subject:module.exports,api,calls,summaries,outputs,virtual,testRuns};
 }
+
+test('no app tests means no Playwright invocation and an honest PR report, not an invented passing test', async () => {
+  const f = publicationFixture({testFiles:['example.spec.ts'], git:{'ls-files':''}});
+  await f.subject.acceptance(f.api);
+  assert.equal(f.testRuns.length, 0);
+  await f.subject.publish(f.api);
+  assert.match(f.api.created.body, /No BookMonkey Playwright tests are present/);
+  assert(!f.api.created.body.includes('Verified 1 passing'));
+});
+
+test('existing regression files run without a new issue test and remain mandatory', async () => {
+  const report = passingReport();
+  const specs = report.suites[0].suites[0].specs;
+  specs[0].file = 'book-favorites.spec.ts';
+  specs.push({...specs[0], file:'issue-2.spec.ts'});
+  report.stats.expected = 2;
+  const f = publicationFixture({testFiles:['example.spec.ts','book-favorites.spec.ts','issue-2.spec.ts'],
+    testResult:{status:0,stdout:JSON.stringify(report)}});
+  await f.subject.acceptance(f.api);
+  const args = f.testRuns[0];
+  assert(args.includes('tests/book-favorites.spec.ts'));
+  assert(args.includes('tests/issue-2.spec.ts'));
+  assert(!args.includes('tests/example.spec.ts'));
+  assert(args.includes('--forbid-only'));
+  assert(args.includes('--project=chromium'));
+  await f.subject.publish(f.api);
+  assert.match(f.api.created.body, /Verified 2 passing Chromium tests in 2 BookMonkey test file/);
+
+  for (const testResult of [{status:1,stdout:JSON.stringify(report)},
+    {status:0,stdout:'invalid'}, {status:0,stdout:JSON.stringify(passingReport())}]) {
+    const failed = publicationFixture({testFiles:['book-favorites.spec.ts','issue-2.spec.ts'],testResult});
+    await assert.rejects(failed.subject.acceptance(failed.api));
+    assert.equal(failed.api.created, undefined);
+    assert.equal(failed.calls.length, 0);
+  }
+});
 
 test('preparation creates only a local branch and writes issue data and a small readable schema', async () => {
   const f=publicationFixture(); await f.subject.prepare(f.api);
