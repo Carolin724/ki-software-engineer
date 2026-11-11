@@ -152,8 +152,11 @@ jobs:
             Behalte Standalone-Komponenten und BookApiClient bei. Ein gemeinsamer
             fachlicher Favoriten-Service ist bei entsprechendem Issue-Bedarf erlaubt;
             fuehre dafuer keine zusaetzlichen Abhaengigkeiten ein.
-            Installiere nichts und starte keine Netzwerk-, Build- oder Testbefehle hier.
-            Nachfolgende Workflow-Schritte fuehren Build und Akzeptanztests aus.
+            Installiere nichts und starte keine Netzwerk- oder Testbefehle hier.
+            Fuehre mit den bereits installierten Abhaengigkeiten npm run build aus.
+            Behebe Compilerfehler innerhalb der Freigaben und pruefe den Build erneut.
+            Melde implemented erst nach erfolgreichem Build. Nachfolgende Workflow-
+            Schritte pruefen den Produktionsbuild unabhaengig und die Akzeptanztests.
 
             Bearbeite die echten Dateien im bereits ausgecheckten Feature-Branch.
             Liefere keinen Patch. Keine Git-Schreiboperationen, Commits, Pushes,
