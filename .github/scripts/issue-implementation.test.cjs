@@ -52,8 +52,17 @@ test('workflow structure keeps one gated job and supplies secrets only to the re
   assert.match(last.if, /proceed == 'true'/);
   assert.match(last.env.GH_TOKEN, /secrets.PAT_TOKEN/);
   assert.equal(steps.filter(s=>JSON.stringify(s).includes('secrets.PAT_TOKEN')).length, 1);
-  assert.equal(steps.filter(s=>JSON.stringify(s).includes('secrets.ANTHROPIC_API_KEY')).length, 1);
-  assert.equal(steps.filter(s=>s.if?.startsWith('always()')).length, 2);
+  assert.equal(steps.filter(s=>JSON.stringify(s).includes('secrets.ANTHROPIC_API_KEY')).length, 2);
+  assert.equal(steps.filter(s=>s.if?.startsWith('always()')).length, 4);
+  const acceptance=steps.find(s=>s.id==='acceptance'), repair=steps.find(s=>s.id==='repair');
+  const retest=steps.find(s=>s.id==='retest');
+  assert.equal(acceptance['continue-on-error'],'true');
+  assert.equal(retest['continue-on-error'],undefined);
+  assert.match(last.if,/steps\.acceptance\.outcome == 'success' \|\| steps\.retest\.outcome == 'success'/);
+  assert.match(repair.if,/steps\.acceptance\.outcome == 'failure'/);
+  for(const key of ['permission-profile','safety-strategy','codex-user','codex-version']) {
+    assert.equal(repair.with[key],codex.with[key]);
+  }
   const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
   for (const step of steps) if (step.with?.script) new AsyncFunction(step.with.script);
 });
@@ -180,20 +189,26 @@ test('acceptance requires actual passing issue tests, not skips, flaky or expect
 // Run the publication code with a fake filesystem, Git process and GitHub API.
 // No test creates a commit, pushes a branch or calls the network.
 function publicationFixture(options = {}) {
-  const calls = [], virtual = {};
+  const calls = [], virtual = {}, writeOptions = {};
   const issue = { number: 1, title: 'Favoriten', body: 'AK1', state: 'open',
     user: { login: 'Carolin724' }, labels: [{name:'ready-for-implementation'}] };
   const snapshot = JSON.stringify({title:issue.title, body:issue.body, comments:[]});
   const saved = { ...state, digest: require('node:crypto').createHash('sha256').update(snapshot).digest('hex'), ...options.state };
   const f = gitFixture(options.git);
   const fakeFs = { lstatSync: () => regular, readFileSync: () => JSON.stringify(saved),
-    writeFileSync: (p, data) => { virtual[p] = data; } };
+    readdirSync: () => ['issue-1.spec.ts'], existsSync: p => Object.hasOwn(virtual,p),
+    writeFileSync: (p, data, opts) => { virtual[p] = data; writeOptions[p] = opts; } };
   const module = {exports:{}};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'issue-implementation.cjs'),'utf8'), {
     module, Buffer,
-    process: {env:{ RUNNER_TEMP:'/trusted', GITHUB_TRIGGERING_ACTOR:'Carolin724', GH_TOKEN:'test-token', ...options.env }},
+    process: {env:{ RUNNER_TEMP:'/trusted', GITHUB_TRIGGERING_ACTOR:'Carolin724', GH_TOKEN:'test-token',
+      PROJECT_NODE_BIN:'/trusted/node/bin', PLAYWRIGHT_BROWSERS_PATH:'/trusted/browsers', ...options.env }},
     require: name => name === 'node:fs' ? fakeFs : name === 'node:child_process' ? {
       spawnSync: (command,args,opts) => {
+        if(command==='sudo') {
+          assert(args.includes('-i'),'Tests must run with a cleared environment');
+          return options.acceptanceResult ?? {status:0,stdout:JSON.stringify(passingReport())};
+        }
         assert.equal(command,'git');
         // Strip the two trusted -c overrides added by makeGit.
         const operation=args.slice(4); calls.push({operation,env:opts.env});
@@ -211,8 +226,33 @@ function publicationFixture(options = {}) {
       rest:{issues:{get:async()=>({data:issue}),listComments:'comments'},
         pulls:{list:'pulls',create:async p=>{if(options.prFailure)throw {status:403};api.created=p;return {data:{html_url:'https://github.com/test/pull/1'}};}},
         git:{listMatchingRefs:async()=>({data:options.refs ?? []}),getRef:async()=>({data:{object:{sha:options.main ?? base}}})}}}};
-  return {subject:module.exports,api,calls,summaries,outputs,virtual};
+  return {subject:module.exports,api,calls,summaries,outputs,virtual,writeOptions};
 }
+
+test('a failed acceptance run remains failed and exposes only read-only bounded diagnostics to repair', async () => {
+  const report=passingReport();
+  report.stats.unexpected=1;
+  report.suites[0].suites[0].specs[0].tests[0].results[0]={status:'failed',errors:[{message:'Expected the same favorite book'}]};
+  const f=publicationFixture({acceptanceResult:{status:1,stdout:JSON.stringify(report)}});
+  await assert.rejects(f.subject.acceptance(f.api),/Playwright failed/);
+  const entry=Object.entries(f.virtual).find(([name])=>name.endsWith('implementation-test-feedback.json'));
+  assert(entry);
+  const feedback=JSON.parse(entry[1]);
+  assert.match(feedback.trust,/UNTRUSTED TEST OUTPUT/);
+  assert.match(feedback.failures[0].message,/same favorite book/);
+  assert.equal(f.writeOptions[entry[0]].mode,0o444);
+  assert.equal(f.writeOptions[entry[0]].flag,'wx');
+  assert.equal(f.api.created,undefined);
+});
+
+test('a passing acceptance run needs no repair, while a skipped test cannot pass the final gate', async () => {
+  const f=publicationFixture(); await f.subject.acceptance(f.api);
+  assert.equal(Object.keys(f.virtual).length,0);
+  const skipped=passingReport(); skipped.stats.skipped=1;
+  const g=publicationFixture({acceptanceResult:{status:0,stdout:JSON.stringify(skipped)}});
+  await assert.rejects(g.subject.acceptance(g.api),/without skips/);
+  assert.equal(g.api.created,undefined);
+});
 
 test('preparation creates only a local branch and writes issue data and a small readable schema', async () => {
   const f=publicationFixture(); await f.subject.prepare(f.api);
