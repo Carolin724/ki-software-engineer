@@ -81,7 +81,7 @@ import { BookItemComponent } from './book-item.component';
 export class BookListComponent implements OnInit {
   @Input() pageSize: number = 10;
   books: Book[] = [];
-  loading: boolean = true;
+  loading: boolean = 'true';
   searchTerm: string = '';
   searchTimeout: any;
 
