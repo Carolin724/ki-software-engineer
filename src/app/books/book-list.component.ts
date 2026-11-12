@@ -11,7 +11,7 @@ import { BookItemComponent } from './book-item.component';
   imports: [CommonModule, FormsModule, BookItemComponent],
   template: `
     <div class="container mx-auto px-4 py-12 max-w-7xl">
-      <h1 class="text-3xl font-bold mb-10 text-blue-700 border-b pb-4 border-gray-200">Book Collection</h1>
+      <h1 class="text-3xl font-bold mb-10 text-blue-700 border-b pb-4 border-gray-200">Büchersammlung</h1>
 
       <div class="mb-6">
         <div class="flex items-center border-b-2 border-gray-300 py-2">
@@ -19,10 +19,11 @@ import { BookItemComponent } from './book-item.component';
             type="text"
             [(ngModel)]="searchTerm"
             (ngModelChange)="onSearchChange()"
-            placeholder="Search for books..."
+            placeholder="Bücher suchen …"
+            aria-label="Bücher suchen"
             class="appearance-none bg-transparent border-none w-full text-gray-700 mr-3 py-1 px-2 leading-tight focus:outline-none"
           />
-          <button *ngIf="searchTerm" (click)="clearSearch()" class="flex-shrink-0 text-gray-500 hover:text-gray-700">
+          <button *ngIf="searchTerm" (click)="clearSearch()" aria-label="Suche löschen" class="flex-shrink-0 text-gray-500 hover:text-gray-700">
             <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
             </svg>
@@ -35,9 +36,11 @@ import { BookItemComponent } from './book-item.component';
           <div
             class="h-16 w-16 rounded-full border-4 border-t-blue-700 border-r-blue-700 border-b-gray-200 border-l-gray-200 animate-spin"
           ></div>
-          <p class="mt-4 text-gray-600">Loading books...</p>
+          <p class="mt-4 text-gray-600">Bücher werden geladen …</p>
         </div>
       </div>
+
+      <div *ngIf="error" class="mb-6 rounded-xl bg-red-50 p-6 text-red-800" role="alert">{{ error }}</div>
 
       <div *ngIf="!loading" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-8">
         <app-book-item *ngFor="let book of books; trackBy: trackById" [book]="book"></app-book-item>
@@ -61,17 +64,17 @@ import { BookItemComponent } from './book-item.component';
             />
           </svg>
           <p class="text-xl font-medium text-gray-600 mb-2">
-            {{ searchTerm ? 'No books match your search' : 'No books available' }}
+            {{ searchTerm ? 'Keine passenden Bücher gefunden' : 'Keine Bücher verfügbar' }}
           </p>
           <p class="text-gray-500">
-            {{ searchTerm ? 'Try different search terms or clear the search' : 'Check back later' }}
+            {{ searchTerm ? 'Versuchen Sie andere Suchbegriffe oder löschen Sie die Suche.' : 'Bitte versuchen Sie es später erneut.' }}
           </p>
           <button
             *ngIf="searchTerm"
             (click)="clearSearch()"
             class="mt-4 bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-md transition duration-200"
           >
-            Clear Search
+            Suche löschen
           </button>
         </div>
       </div>
@@ -84,6 +87,7 @@ export class BookListComponent implements OnInit {
   loading: boolean = true;
   searchTerm: string = '';
   searchTimeout: any;
+  error: string | null = null;
 
   constructor(private bookApiClient: BookApiClient) {}
 
@@ -93,6 +97,7 @@ export class BookListComponent implements OnInit {
 
   private loadBooks(search?: string): void {
     this.loading = true;
+    this.error = null;
     this.bookApiClient.getBooks(this.pageSize, search).subscribe({
       next: books => {
         this.books = books;
@@ -100,6 +105,7 @@ export class BookListComponent implements OnInit {
       },
       error: error => {
         console.error('Error fetching books:', error);
+        this.error = 'Die Bücher konnten nicht geladen werden.';
         this.loading = false;
       }
     });
