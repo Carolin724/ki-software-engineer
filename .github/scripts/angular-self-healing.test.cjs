@@ -54,7 +54,16 @@ function harness(options = {}) {
       listJobsForWorkflowRunAttempt: listAttemptJobs, listJobsForWorkflowRun: listJobs,
       downloadJobLogsForWorkflowRun: async input => {
         if (options.logApiFailure && input.job_id === 20) throw Object.assign(new Error('Log API unavailable'), { status: 503 });
-        return { headers: { location: 'https://logs.example/' + input.job_id } };
+        const logs = input.job_id === 20 ? options.logs || 'Error TS2322: incompatible type' : 'Error: inspection could not read logs';
+        let data = logs;
+        if (options.logBody === 'buffer') data = Buffer.from(logs);
+        if (options.logBody === 'arraybuffer') {
+          const bytes = Buffer.from(logs);
+          data = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+        }
+        // Octokit follows the REST endpoint's redirect and returns the final body.
+        // There is no Location header on that HTTP 200 response.
+        return { status: options.logHttpFailure ? 503 : 200, headers: {}, data };
       }
     },
     pulls: {
@@ -132,8 +141,7 @@ function harness(options = {}) {
       core: { setOutput: (key, value) => { state.outputs[key] = value; },
         notice: value => state.notices.push(value), warning: value => state.notices.push(value),
         setFailed: value => state.failed.push(value) },
-      fetch: async url => ({ ok: !options.logHttpFailure,
-        text: async () => url.endsWith('/20') ? options.logs || 'Error TS2322: incompatible type' : 'Error: inspection could not read logs' }),
+      fetch: async () => { throw new Error('Unexpected secondary log fetch'); },
       require: name => name === 'node:fs' ? {
         mkdirSync() {},
         writeFileSync: (file, content) => state.files.set(file.replaceAll('\\', '/'), content),
@@ -182,6 +190,28 @@ test('workflow names, build verification and minimal CI permissions remain conne
   assert.equal(auto.jobs.verify.permissions.contents, 'read');
   assert.equal(auto.jobs.verify.permissions.issues, undefined);
   assert.equal(auto.jobs.verify.permissions['pull-requests'], undefined);
+});
+
+for (const logBody of ['text', 'buffer', 'arraybuffer']) {
+  test('HTTP 200 ' + logBody + ' logs without Location reach the Codex analysis input', async () => {
+    const logs = 'Error TS2322: falscher Typ für Bücher';
+    const state = harness({ logBody, logs });
+    await state.authorize();
+    await state.inspect();
+    assert.equal(state.outputs.repairable, 'true');
+    const input = JSON.parse([...state.files.values()][0]);
+    assert.equal(input.logs, logs);
+    assert.equal(input.files[0].path, 'src/app/books/book.ts');
+    assert.equal(state.issues.length, 1);
+  });
+}
+
+test('diagnostic publication also consumes the final log body without a redirect header', async () => {
+  const state = harness({ jobListFailure: true });
+  await state.authorize();
+  await assert.rejects(state.inspect());
+  await state.publish();
+  assert.match(state.issues[0].body, /inspection could not read logs/);
 });
 
 for (const options of [{ number: 9 }, { number: 11 }, { run: { head_repository: { full_name: 'someone/fork' } } }]) {

@@ -136,14 +136,13 @@ jobs:
             core.setOutput('claimed', 'true');
 
             // Read actual job logs directly from GitHub, never a PR-supplied artifact.
+            // Octokit follows the download redirect and returns the final log body.
             const download = await github.rest.actions.downloadJobLogsForWorkflowRun({
-              ...repo, job_id: build.id, request: { redirect: 'manual' }
+              ...repo, job_id: build.id
             });
-            const location = download.headers.location;
-            if (!location || new URL(location).protocol !== 'https:') throw new Error('Invalid log download redirect');
-            const response = await fetch(location); // Never forward the GitHub token to storage.
-            if (!response.ok) throw new Error('Build logs unavailable');
-            const rawLogs = await response.text();
+            if (download.status !== 200) throw new Error('Build logs unavailable');
+            const rawLogs = typeof download.data === 'string'
+              ? download.data : Buffer.from(download.data).toString('utf8');
             if (Buffer.byteLength(rawLogs) > 2_000_000) throw new Error('Build log exceeds safety limit');
             const logs = rawLogs.replace(/\u001b\[[0-9;]*m/g, '')
               .replace(/^\d{4}-\d\d-\d\dT\S+\s/gm, '')
@@ -450,12 +449,12 @@ jobs:
                       ['failure', 'cancelled', 'timed_out'].includes(j.conclusion))) {
                     try {
                       const download = await github.rest.actions.downloadJobLogsForWorkflowRun({
-                        ...repo, job_id: failed.id, request: { redirect: 'manual' }
+                        ...repo, job_id: failed.id
                       });
-                      const location = download.headers.location;
-                      if (!location || new URL(location).protocol !== 'https:') throw new Error('Invalid log redirect');
-                      const response = await fetch(location);
-                      if (response.ok) evidence.logs += '\n' + failed.name + ':\n' + (await response.text()).slice(-20000);
+                      if (download.status !== 200) throw new Error('Diagnostic logs unavailable');
+                      const logs = typeof download.data === 'string'
+                        ? download.data : Buffer.from(download.data).toString('utf8');
+                      evidence.logs += '\n' + failed.name + ':\n' + logs.slice(-20000);
                     } catch { /* The issue still links the complete attempt logs. */ }
                   }
                 } catch { core.warning('Attempt logs unavailable; recording a diagnosis with run links.'); }
