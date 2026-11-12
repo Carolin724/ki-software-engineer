@@ -192,6 +192,16 @@ test('workflow names, build verification and minimal CI permissions remain conne
   assert.equal(auto.jobs.verify.permissions['pull-requests'], undefined);
 });
 
+test('Codex action defaults and workflow arguments produce only one git-check override', () => {
+  const codex = auto.jobs.propose.steps.find(item => item.uses?.startsWith('openai/codex-action@'));
+  // The pinned action supplies this flag itself (also present in the failing CI log).
+  const actionArguments = ['exec', '--skip-git-repo-check'];
+  const extraArguments = JSON.parse(codex.with['codex-args'] || '[]');
+  const argv = [...actionArguments, ...extraArguments];
+  assert.equal(argv.filter(argument => argument === '--skip-git-repo-check').length, 1,
+    'codex exec rejects repeated --skip-git-repo-check arguments');
+});
+
 for (const logBody of ['text', 'buffer', 'arraybuffer']) {
   test('HTTP 200 ' + logBody + ' logs without Location reach the Codex analysis input', async () => {
     const logs = 'Error TS2322: falscher Typ für Bücher';

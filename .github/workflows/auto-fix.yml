@@ -248,7 +248,6 @@ jobs:
           codex-home: ${{ runner.temp }}/repair-codex-home
           working-directory: ${{ runner.temp }}/repair-work
           prompt-file: ${{ runner.temp }}/repair-work/prompt.txt
-          codex-args: '["--skip-git-repo-check"]'
           output-file: ${{ runner.temp }}/proposal.json
           output-schema: |
             {"type":"object","additionalProperties":false,
